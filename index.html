@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Khxzi Support — Live Ticket</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="banner">
+      <img class="banner-logo" src="https://khxzi.com/assets/logo.png" alt="Khxzi Logo" />
+      <div class="banner-text">
+        <div class="title">Khxzi’s Dev Services</div>
+        <div class="subtitle">Live Support</div>
+      </div>
+    </header>
+
+    <div class="wrap">
+      <aside class="side">
+        <div class="profile">
+          <img id="top-avatar" class="top-avatar" src="/anon.png" alt="avatar">
+          <div>
+            <div id="top-name" class="top-name">Not signed in</div>
+            <div id="top-email" class="top-email">—</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Quick Details</h3>
+          <ol>
+            <li id="q1">Theme / BG / images</li>
+            <li id="q2">Name of website</li>
+            <li id="q3">AI 24/7 support?</li>
+          </ol>
+        </div>
+
+        <div class="actions">
+          <button id="signin" class="btn primary">Sign in with Discord</button>
+          <button id="close-ticket" class="btn danger" disabled>Close Ticket</button>
+        </div>
+
+        <div class="note">
+          <small>Max 3 open tickets / user. Bot-branded messages appear in Discord.</small>
+        </div>
+      </aside>
+
+      <main class="chat">
+        <div id="chat-header" class="chat-header">
+          <div id="chat-title">Support Chat</div>
+          <div id="chat-status" class="small muted">Disconnected</div>
+        </div>
+
+        <div id="messages" class="messages"></div>
+
+        <form id="msg-form" class="msg-form">
+          <input id="msg-input" placeholder="Type a message..." autocomplete="off" />
+          <button type="submit" class="btn send">Send</button>
+        </form>
+      </main>
+    </div>
+  </div>
+
+  <template id="tpl-msg">
+    <div class="bubble">
+      <img class="bubble-avatar"/>
+      <div class="bubble-body">
+        <div class="bubble-meta"><span class="who"></span> <span class="time small muted"></span></div>
+        <div class="bubble-text"></div>
+      </div>
+    </div>
+  </template>
+
+<script>
+(() => {
+  const API_BASE = window.location.origin;
+  const SIGNIN_BTN = document.getElementById('signin');
+  const CLOSE_BTN = document.getElementById('close-ticket');
+  const MFORM = document.getElementById('msg-form');
+  const MINPUT = document.getElementById('msg-input');
+  const MESSAGES = document.getElementById('messages');
+  const TOP_AVATAR = document.getElementById('top-avatar');
+  const TOP_NAME = document.getElementById('top-name');
+  const TOP_EMAIL = document.getElementById('top-email');
+  const CHAT_STATUS = document.getElementById('chat-status');
+
+  let me = null;
+  let socket = null;
+  let currentTicketId = null;
+
+  function addMessage({who, avatar, text, time, system=false}) {
+    const tpl = document.getElementById('tpl-msg').content.cloneNode(true);
+    const root = tpl.querySelector('.bubble');
+    const img = tpl.querySelector('.bubble-avatar');
+    const whoEl = tpl.querySelector('.who');
+    const timeEl = tpl.querySelector('.time');
+    const textEl = tpl.querySelector('.bubble-text');
+
+    img.src = avatar || '/anon.png';
+    whoEl.textContent = who;
+    timeEl.textContent = new Date(time).toLocaleTimeString();
+    textEl.textContent = text;
+
+    if (system) root.classList.add('system');
+    if (who === me?.username) root.classList.add('me');
+
+    MESSAGES.appendChild(tpl);
+    MESSAGES.scrollTop = MESSAGES.scrollHeight;
+  }
+
+  async function fetchMe() {
+    try {
+      const r = await fetch('/me', { credentials: 'include' });
+      const j = await r.json();
+      if (j.logged) {
+        me = j.user;
+        TOP_NAME.textContent = me.username;
+        TOP_EMAIL.textContent = me.email || '—';
+        TOP_AVATAR.src = me.avatar || '/anon.png';
+        SIGNIN_BTN.style.display = 'none';
+        CHAT_STATUS.textContent = 'Connected (not in ticket)';
+        return true;
+      } else {
+        me = null;
+        SIGNIN_BTN.style.display = 'inline-block';
+        CHAT_STATUS.textContent = 'Not signed in';
+        return false;
+      }
+    } catch (e) {
+      console.error('me fetch error', e);
+      return false;
+    }
+  }
+
+  function openPopupAuth() {
+    const popup = window.open('/auth/discord', 'discord_oauth', 'width=900,height=650');
+    if (!popup) return alert('Popup blocked — allow popups.');
+    const poll = setInterval(async () => {
+      // after oauth completes server will set session; poll /me
+      const ok = await fetchMe();
+      if (ok) {
+        clearInterval(poll);
+        initSocket();
+      }
+    }, 1200);
+  }
+
+  function initSocket() {
+    if (socket) socket.disconnect();
+    socket = io({ transports:['websocket'] , withCredentials:true });
+
+    socket.on('connect', () => {
+      CHAT_STATUS.textContent = 'Socket connected';
+      socket.emit('init', { user: me });
+    });
+
+    socket.on('disconnect', () => {
+      CHAT_STATUS.textContent = 'Socket disconnected';
+    });
+
+    socket.on('ticket:opened', payload => {
+      currentTicketId = payload.ticketId;
+      addMessage({who:'SYSTEM', text:`Ticket opened (#${payload.ticketId}) — staff will reply here.`, avatar:'', time: Date.now(), system:true});
+      CLOSE_BTN.disabled = false;
+    });
+
+    socket.on('message', m => {
+      // messages from staff/discord
+      addMessage({who: m.authorName, avatar: m.avatar, text: m.text, time: m.time});
+    });
+
+    socket.on('ticket:closed', payload => {
+      addMessage({who:'SYSTEM', avatar:'', text:'Ticket closed by staff.', time: Date.now(), system:true});
+      currentTicketId = null;
+      CLOSE_BTN.disabled = true;
+    });
+
+    socket.on('error_msg', e => {
+      addMessage({who:'SYSTEM', avatar:'', text:`Error: ${e}`, time: Date.now(), system:true});
+    });
+  }
+
+  SIGNIN_BTN.addEventListener('click', (e) => {
+    e.preventDefault();
+    openPopupAuth();
+  });
+
+  CLOSE_BTN.addEventListener('click', async () => {
+    if (!currentTicketId) return alert('No open ticket.');
+    const res = await fetch(`/close/${currentTicketId}`, { method: 'POST', credentials: 'include' });
+    const j = await res.json();
+    if (j.ok) {
+      addMessage({who:'SYSTEM', avatar:'', text:'You closed the ticket.', time: Date.now(), system:true});
+      currentTicketId = null;
+      CLOSE_BTN.disabled = true;
+    } else {
+      addMessage({who:'SYSTEM', avatar:'', text:`Close failed: ${j.error || 'unknown'}`, time: Date.now(), system:true});
+    }
+  });
+
+  MFORM.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const text = MINPUT.value.trim();
+    if (!text) return;
+    // local immediate render
+    addMessage({who: me?.username || 'You', avatar: me?.avatar, text, time: Date.now()});
+    // send to server (server will create ticket if needed)
+    if (!socket) {
+      addMessage({who:'SYSTEM', avatar:'', text:'Socket not connected.', time: Date.now(), system:true});
+      return;
+    }
+    socket.emit('message', { text, ticketId: currentTicketId });
+    MINPUT.value = '';
+  });
+
+  // On initial load: if redirected with ?code= (OAuth), server will have set session already and returned a small page that posts a message to opener and closes.
+  // So we simply poll /me to see if logged in and initialize socket if yes.
+  (async () => {
+    const ok = await fetchMe();
+    if (ok) initSocket();
+  })();
+
+})();
+</script>
+</body>
+</html>
