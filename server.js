@@ -35,7 +35,7 @@ const { Server } = require('socket.io');
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
 
 const CONFIG = {
-  BOT_TOKEN: "MTQzNTYyNjk5MTgwNTI2ODA1MQ.GHSyyQ.g1KJQ0luiUelj1NRX5unasJ7X4GkUIBytuW_Jk",
+  BOT_TOKEN: process.env.BOT_TOKEN ,
   CLIENT_ID: "1435626991805268051",
   CLIENT_SECRET: "UOAkW4zg7mCCdR2ZE2gGaBDK836PLIIR",
 
@@ -43,7 +43,6 @@ const CONFIG = {
   GUILD_ID: "1418226394495713426",
   TICKET_CATEGORY_ID: "1435626192341569556",
   PORT: 3000
-
 
 };
 
@@ -334,3 +333,4 @@ server.listen(CONFIG.PORT, () => {
   console.log(`Server running on http://localhost:${CONFIG.PORT}`);
   console.log('Discord OAuth URL:', discordAuthURL());
 });
+
